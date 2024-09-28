@@ -120,10 +120,19 @@ void CPopUpMenu::populateCPDLCOptions(string func) {
         m_listElements.emplace_back(SPopUpElement("PROCEED DIRECT TO (FIX)", "CPDLCDirect", 0, 0, 190));
     }
     if (func == "Radar") {
-        m_listElements.emplace_back(SPopUpElement("SURVEILLANCE SERVICES TERMINATED", "CPDLCServTerm", 0, 0, 210));
-        m_listElements.emplace_back(SPopUpElement("SQUAWK (CODE)", "CPDLCSquawkCode", 0, 0, 210));
-        m_listElements.emplace_back(SPopUpElement("SQUAWK IDENT", "CPDLCSquawkIdent", 0, 0, 210));
-        m_listElements.emplace_back(SPopUpElement("SQUAWK (CODE) SQUAWK IDENT", "CPDLCSquawkCodeIdent", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("SURVEILLANCE SERVICES TERMINATED", "CPDLCRadarServTerm", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("STOP SQUAWK", "CPDLCRadarSquawkStop", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("SQUAWK (CODE)", "CPDLCRadarSquawkCode", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("SQUAWK IDENT", "CPDLCRadarSquawkIdent", 0, 0, 210));
+    }
+    if (func == "Misc") {
+        m_listElements.emplace_back(SPopUpElement("AT PILOTS DISCRETION", "CPDLCMiscAtPilotDiscretion", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("MAINTAIN OWN SEPARATION AND VMC", "CPDLCMiscMaintainSepAndVmc", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("DISREGARD", "CPDLCMiscDisregard", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("DUE TO AIRSPACE RESTRICTION", "CPDLCMiscDueToArspcRstr", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("DUE TO TRAFFIC", "CPDLCMiscDueToTraffic", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("THEN", "CPDLCMiscThen", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("WHEN READY", "CPDLCMiscWhenReady", 0, 0, 190));
     }
 
 }

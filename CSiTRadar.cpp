@@ -2507,7 +2507,7 @@ void CSiTRadar::OnClickScreenObject(int ObjectType,
 			}
 		}
 
-		if (func == "Radio" || func == "Altitude" || func == "Speed" || func == "Route" || func == "Radar") {
+		if (func == "Radio" || func == "Altitude" || func == "Speed" || func == "Route" || func == "Radar" || func == "Misc") {
 
 			menuState.MB3hoverRect = { 0,0,0,0 };
 			menuState.MB3menu = 1;
@@ -3109,23 +3109,12 @@ void CSiTRadar::OnButtonDownScreenObject(int ObjectType,
 				}
 			
 			}
-			else if (ObjectIdStr == "CPDLCServTerm") {
-				pdcuplink.responseRequired = "R";
-				pdcuplink.rawMessageContent = "SURVEILLANCE SERVICES TERMINATED";
-			}
-			else if (ObjectIdStr.substr(0, 11) == "CPDLCSquawk")
+			else if (ObjectIdStr.substr(0, 10) == "CPDLCRadar")
 			{
-				string code = "";
-				if (fp.GetControllerAssignedData().GetSquawk())
-					code = fp.GetControllerAssignedData().GetSquawk();
-
-				pdcuplink.responseRequired = "R";
-
-				if (ObjectIdStr.find("Code"))
-					pdcuplink.rawMessageContent += "SQUAWK @" + code + "@ ";
-
-				if (ObjectIdStr.find("Ident"))
-					pdcuplink.rawMessageContent += "SQUAWK IDENT";
+				CPDLCRadarOptions(fp, pdcuplink, ObjectIdStr);
+			}
+			else if (ObjectIdStr.substr(0, 9) == "CPDLCMisc") {
+				CPDLCMiscMenu(ObjectIdStr, pdcuplink);
 			}
 
 
@@ -3680,6 +3669,63 @@ void CSiTRadar::OnButtonDownScreenObject(int ObjectType,
 	}
 	if (ObjectType == LIST_OFF_SCREEN) {
 		acLists[LIST_OFF_SCREEN].collapsed = !acLists[LIST_OFF_SCREEN].collapsed;
+	}
+}
+
+void CSiTRadar::CPDLCRadarOptions(EuroScopePlugIn::CFlightPlan& fp, CPDLCMessage& pdcuplink, std::string& ObjectIdStr)
+{
+	if (ObjectIdStr.find("ServTerm") != std::string::npos) {
+		pdcuplink.responseRequired = "R";
+		pdcuplink.rawMessageContent = "SURVEILLANCE SERVICES TERMINATED";
+	}
+
+	if (ObjectIdStr.find("Squawk") != std::string::npos) {
+		string code = "";
+		if (fp.GetControllerAssignedData().GetSquawk())
+			code = fp.GetControllerAssignedData().GetSquawk();
+
+		pdcuplink.responseRequired = "WU";
+
+		if (ObjectIdStr.find("Code") != std::string::npos)
+			pdcuplink.rawMessageContent = "SQUAWK @" + code + "@";
+
+		if (ObjectIdStr.find("Ident") != std::string::npos)
+			pdcuplink.rawMessageContent = "SQUAWK IDENT";
+
+		if (ObjectIdStr.find("Stop") != std::string::npos)
+			pdcuplink.rawMessageContent = "STOP SQUAWK";
+	}
+}
+
+void CSiTRadar::CPDLCMiscMenu(std::string& ObjectIdStr, CPDLCMessage& pdcuplink)
+{
+	if (ObjectIdStr.find("WhenReady") != std::string::npos) {
+		pdcuplink.responseRequired = "NE";
+		pdcuplink.rawMessageContent = "WHEN READY";
+	}
+	if (ObjectIdStr.find("Then") != std::string::npos) {
+		pdcuplink.responseRequired = "NE";
+		pdcuplink.rawMessageContent = "THEN";
+	}
+	if (ObjectIdStr.find("DueToTraffic") != std::string::npos) {
+		pdcuplink.responseRequired = "NE";
+		pdcuplink.rawMessageContent = "DUE TO TRAFFIC";
+	}
+	if (ObjectIdStr.find("DueToArspcRstr") != std::string::npos) {
+		pdcuplink.responseRequired = "NE";
+		pdcuplink.rawMessageContent = "DUE TO AIRSPACE RESTRICTION";
+	}
+	if (ObjectIdStr.find("Disregard") != std::string::npos) {
+		pdcuplink.responseRequired = "R";
+		pdcuplink.rawMessageContent = "DISREGARD";
+	}
+	if (ObjectIdStr.find("MaintainSepAndVmc") != std::string::npos) {
+		pdcuplink.responseRequired = "WU";
+		pdcuplink.rawMessageContent = "MAINTAIN OWN SEPARATION AND VMC";
+	}
+	if (ObjectIdStr.find("AtPilotDiscretion") != std::string::npos) {
+		pdcuplink.responseRequired = "N";
+		pdcuplink.rawMessageContent = "AT PILOTS DISCRETION";
 	}
 }
 
