@@ -120,7 +120,10 @@ void CPopUpMenu::populateCPDLCOptions(string func) {
         m_listElements.emplace_back(SPopUpElement("PROCEED DIRECT TO (FIX)", "CPDLCDirect", 0, 0, 190));
     }
     if (func == "Radar") {
-        m_listElements.emplace_back(SPopUpElement("SURVEILLANCE SERVICES TERMINATED", "CPDLCServTerm", 0, 0, 190));
+        m_listElements.emplace_back(SPopUpElement("SURVEILLANCE SERVICES TERMINATED", "CPDLCServTerm", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("SQUAWK (CODE)", "CPDLCSquawkCode", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("SQUAWK IDENT", "CPDLCSquawkIdent", 0, 0, 210));
+        m_listElements.emplace_back(SPopUpElement("SQUAWK (CODE) SQUAWK IDENT", "CPDLCSquawkCodeIdent", 0, 0, 210));
     }
 
 }

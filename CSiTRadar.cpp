@@ -2464,15 +2464,16 @@ void CSiTRadar::OnClickScreenObject(int ObjectType,
 					// Do the thing
 					if (it->second.m_textfields_.size() > 0)
 					{
-
 						it->second.m_textfields_.at(1).m_cpdlcmessage = pdcuplink;
-
 					}
 				}
 				else {
 
+					SituPlugin::SendKeyboardString(".chat " + window->m_callsign);
+					SituPlugin::SendKeyboardPresses({ 0x1C });
+
 					SetTextToClipBoard(pdcuplink.rawMessageContent);
-					pdcuplink.rawMessageContent.insert(0, "ERR: NO DOWNLINK, PDC COPIED TO CLIPBOARD:");
+					pdcuplink.rawMessageContent.insert(0, "ERR: NO DOWNLINK, PDC COPIED TO CLIPBOARD: \r\n");
 					it->second.m_textfields_.at(1).m_cpdlcmessage = pdcuplink;
 
 				}
@@ -2485,7 +2486,7 @@ void CSiTRadar::OnClickScreenObject(int ObjectType,
 
 			GetPlugIn()->SetASELAircraft(GetPlugIn()->FlightPlanSelect(window->m_callsign.c_str()));
 			StartTagFunction(GetPlugIn()->FlightPlanSelectASEL().GetCallsign(), NULL, TAG_ITEM_TYPE_PLANE_TYPE, sObjectId, NULL, TAG_ITEM_FUNCTION_OPEN_FP_DIALOG, Pt, Area);
-		
+
 		}
 
 		if (func == "Close Dialog") {
@@ -2506,7 +2507,7 @@ void CSiTRadar::OnClickScreenObject(int ObjectType,
 			}
 		}
 
-		if (func == "Radio" || func == "Altitude" || func == "Speed" || func == "Route") {
+		if (func == "Radio" || func == "Altitude" || func == "Speed" || func == "Route" || func == "Radar") {
 
 			menuState.MB3hoverRect = { 0,0,0,0 };
 			menuState.MB3menu = 1;
@@ -3112,7 +3113,20 @@ void CSiTRadar::OnButtonDownScreenObject(int ObjectType,
 				pdcuplink.responseRequired = "R";
 				pdcuplink.rawMessageContent = "SURVEILLANCE SERVICES TERMINATED";
 			}
+			else if (ObjectIdStr.substr(0, 11) == "CPDLCSquawk")
+			{
+				string code = "";
+				if (fp.GetControllerAssignedData().GetSquawk())
+					code = fp.GetControllerAssignedData().GetSquawk();
 
+				pdcuplink.responseRequired = "R";
+
+				if (ObjectIdStr.find("Code"))
+					pdcuplink.rawMessageContent += "SQUAWK @" + code + "@ ";
+
+				if (ObjectIdStr.find("Ident"))
+					pdcuplink.rawMessageContent += "SQUAWK IDENT";
+			}
 
 
 
