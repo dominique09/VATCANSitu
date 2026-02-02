@@ -576,7 +576,7 @@ public:
 
         if (rainViewerJson)
         {
-            curl_easy_setopt(rainViewerJson, CURLOPT_URL, "https://api.rainviewer.com/public/maps.json");
+            curl_easy_setopt(rainViewerJson, CURLOPT_URL, "https://api.rainviewer.com/public/weather-maps.json");
             curl_easy_setopt(rainViewerJson, CURLOPT_WRITEFUNCTION, write_data);
             curl_easy_setopt(rainViewerJson, CURLOPT_WRITEDATA, &rainViewerJsonString);
             CURLcode res;
