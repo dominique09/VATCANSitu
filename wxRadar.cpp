@@ -6,11 +6,14 @@ string wxRadar::wxLatCtr = { "0.0" };
 string wxRadar::wxLongCtr = { "0.0" };
 int wxRadar::zoomLevel;
 string wxRadar::ts;
+string wxRadar::tileHost = { "https://tilecache.rainviewer.com" };
+string wxRadar::radarPath;
 std::map<string, string> wxRadar::arptAltimeter;
 std::map<string, string> wxRadar::arptAtisLetter;
 std::vector<CAsyncResponse> wxRadar::asyncMessages;
 std::shared_mutex wxRadar::altimeterMutex;
 std::shared_mutex wxRadar::atisLetterMutex;
+std::shared_mutex wxRadar::asyncMessagesMutex;
 json wxRadar::jsVatsimDataFeed;
 
 void wxRadar::loadPNG(std::vector<unsigned char>& buffer, const std::string& filename) //designed for loading files from hard disk in an std::vector
@@ -38,9 +41,29 @@ void wxRadar::parseRadarPNG(CRadarScreen* rad) {
     if(CreateDirectory(".\\situWx\\", NULL)) {}
 
     CURL* pngDL = curl_easy_init();
+    if (!pngDL) {
+        return;
+    }
+
     FILE* dlPNG;
     errno_t err;
-    string tileCacheurl = "https://tilecache.rainviewer.com/v2/radar/" + wxRadar::ts + "/256/4/" + wxRadar::wxLatCtr + "/" + wxRadar::wxLongCtr + "/0/0_0.png";
+
+    string tileCacheurl;
+    if (!wxRadar::radarPath.empty()) {
+        tileCacheurl = wxRadar::tileHost + wxRadar::radarPath + "/256/4/" + wxRadar::wxLatCtr + "/" + wxRadar::wxLongCtr + "/0/0_0.png";
+    }
+    else if (!wxRadar::ts.empty()) {
+        tileCacheurl = "https://tilecache.rainviewer.com/v2/radar/" + wxRadar::ts + "/256/4/" + wxRadar::wxLatCtr + "/" + wxRadar::wxLongCtr + "/0/0_0.png";
+    }
+    else {
+        CAsyncResponse response;
+        response.reponseMessage = "RainViewer metadata unavailable";
+        response.responseCode = 1;
+        std::unique_lock<std::shared_mutex> lock(wxRadar::asyncMessagesMutex);
+        wxRadar::asyncMessages.push_back(response);
+        curl_easy_cleanup(pngDL);
+        return;
+    }
 
     const char* filename = ".\\situWx\\0_0.png";
     curl_easy_setopt(pngDL, CURLOPT_URL, tileCacheurl.c_str());
@@ -210,6 +233,7 @@ void wxRadar::parseVatsimMetar(int i) {
         if (res == CURLE_OPERATION_TIMEDOUT) {
             response.reponseMessage = "METAR Fetch Timed Out";
             response.responseCode = 1;
+            std::unique_lock<std::shared_mutex> lock(wxRadar::asyncMessagesMutex);
             wxRadar::asyncMessages.push_back(response);
         }
         curl_easy_cleanup(metarCurlHandle);
@@ -238,6 +262,7 @@ void wxRadar::parseVatsimMetar(int i) {
     catch (exception& e) {
         response.reponseMessage = e.what();
         response.responseCode = 1;
+        std::unique_lock<std::shared_mutex> lock(wxRadar::asyncMessagesMutex);
         wxRadar::asyncMessages.push_back(response);
     }
 
@@ -252,64 +277,88 @@ void wxRadar::parseVatsimATIS(int i) {
     CAsyncResponse result;
 
     if (vatsimURL) {
-        curl_easy_setopt(vatsimURL, CURLOPT_URL, "http://status.vatsim.net/status.json");
+        curl_easy_setopt(vatsimURL, CURLOPT_URL, "https://status.vatsim.net/status.json");
         curl_easy_setopt(vatsimURL, CURLOPT_WRITEFUNCTION, write_data);
         curl_easy_setopt(vatsimURL, CURLOPT_WRITEDATA, &strVatsimURL);
         curl_easy_setopt(vatsimURL, CURLOPT_TIMEOUT_MS, 1500L);
-        CURLcode res;
-        res = curl_easy_perform(vatsimURL);
-        if (res == CURLE_OPERATION_TIMEDOUT) {
-            result.reponseMessage = "VATSIM Datafeed URL Fetch Timed Out";
+        CURLcode res = curl_easy_perform(vatsimURL);
+        curl_easy_cleanup(vatsimURL);
+        if (res != CURLE_OK) {
+            result.reponseMessage = string("VATSIM Status Fetch Failed: ") + curl_easy_strerror(res);
             result.responseCode = 1;
-            //asyncMessages.insert(result);
+            std::unique_lock<std::shared_mutex> lock(asyncMessagesMutex);
+            asyncMessages.push_back(result);
             return;
         }
-        curl_easy_cleanup(vatsimURL);
     }
 
     string dataURL;
 
-    try {
-        json jsVatsimURL = json::parse(strVatsimURL);
-        dataURL = jsVatsimURL["data"]["v3"][0];
+    if (!strVatsimURL.empty()) {
+        try {
+            json jsVatsimURL = json::parse(strVatsimURL);
+            dataURL = jsVatsimURL["data"]["v3"][0];
+        }
+        catch (exception& e) {
+            result.reponseMessage = string("VATSIM Status JSON Parse Error: ") + e.what();
+            result.responseCode = 1;
+            std::unique_lock<std::shared_mutex> lock(asyncMessagesMutex);
+            asyncMessages.push_back(result);
+            return;
+        }
     }
-    catch (exception& e) { string error = e.what(); }
+
+    if (dataURL.empty()) {
+        result.reponseMessage = "VATSIM Datafeed URL is empty";
+        result.responseCode = 1;
+        std::unique_lock<std::shared_mutex> lock(asyncMessagesMutex);
+        asyncMessages.push_back(result);
+        return;
+    }
 
     if (atisVatsimStatusJson) {
         curl_easy_setopt(atisVatsimStatusJson, CURLOPT_URL, dataURL.c_str());
         curl_easy_setopt(atisVatsimStatusJson, CURLOPT_WRITEFUNCTION, write_data);
         curl_easy_setopt(atisVatsimStatusJson, CURLOPT_WRITEDATA, &jsAtis);
         curl_easy_setopt(atisVatsimStatusJson, CURLOPT_TIMEOUT_MS, 1500L);
-        CURLcode res;
-        res = curl_easy_perform(atisVatsimStatusJson);
-        if (res == CURLE_OPERATION_TIMEDOUT) {
-            result.reponseMessage = "VATSIM Datafeed Timed Out - ATIS letter may be incorrect";
+        CURLcode res = curl_easy_perform(atisVatsimStatusJson);
+        curl_easy_cleanup(atisVatsimStatusJson);
+        if (res != CURLE_OK) {
+            result.reponseMessage = string("VATSIM Datafeed Fetch Failed: ") + curl_easy_strerror(res);
             result.responseCode = 1;
+            std::unique_lock<std::shared_mutex> lock(asyncMessagesMutex);
             asyncMessages.push_back(result);
             return;
         }
-        else {
-            arptAtisLetter.clear();
-        }
-        curl_easy_cleanup(atisVatsimStatusJson);
+        arptAtisLetter.clear();
     }
     else { return; }
 
 
     try {
+        if (jsAtis.empty()) { return; }
         wxRadar::jsVatsimDataFeed = json::parse(jsAtis.c_str());
 
         if (!wxRadar::jsVatsimDataFeed["pilots"].empty()) {
             
-            CSiTRadar::acADSB.empty();
-            CSiTRadar::acRVSM.empty();
+            CSiTRadar::acADSB.clear();
+            CSiTRadar::acRVSM.clear();
 
             // make an internal copy of the data feed, but keep it clean for info needed callsign and capabilities
             for (auto& pilot : wxRadar::jsVatsimDataFeed["pilots"]) {
                 if (!pilot["flight_plan"]["aircraft"].is_null()) {
                     string icaoACData = pilot["flight_plan"]["aircraft"];
-                    regex icaoADSB("(.*)\\/(.*)\\-(.*)\\/(.*)(E|L|B1|B2|U1|U2|V1|V2)(.*)");
-                    bool isADSB = regex_search(icaoACData, icaoADSB);
+
+                    // ICAO equipment format: TYPE/10a-10b/...
+                    // ADS-B capability codes are in the surveillance section (10b), after the second '/'.
+                    bool isADSB = false;
+                    size_t firstSlash = icaoACData.find('/');
+                    size_t secondSlash = (firstSlash == string::npos) ? string::npos : icaoACData.find('/', firstSlash + 1);
+                    if (secondSlash != string::npos && secondSlash + 1 < icaoACData.size()) {
+                        string surveillance = icaoACData.substr(secondSlash + 1);
+                        regex icaoADSB("(B1|B2|U1|U2|V1|V2)", regex::icase);
+                        isADSB = regex_search(surveillance, icaoADSB);
+                    }
 
                     regex icaoRVSM("(.*)\\/(.*)\\-(.*)[W](.*)\\/(.*)", regex::icase);
                     bool isRVSM = regex_search(icaoACData, icaoRVSM);
@@ -332,7 +381,13 @@ void wxRadar::parseVatsimATIS(int i) {
         }
         lock.unlock();
     }
-    catch (exception& e) { result.reponseMessage = e.what(); result.responseCode = 1; asyncMessages.push_back(result); return; }
+    catch (exception& e) {
+        result.reponseMessage = e.what();
+        result.responseCode = 1;
+        std::unique_lock<std::shared_mutex> lock(asyncMessagesMutex);
+        asyncMessages.push_back(result);
+        return;
+    }
 
     return;
 }

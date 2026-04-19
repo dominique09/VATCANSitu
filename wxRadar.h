@@ -553,12 +553,15 @@ public:
     static string wxLongCtr;
     static int zoomLevel;
     static string ts; 
+    static string tileHost;
+    static string radarPath;
 
     static map<string, string> arptAltimeter;
     static map<string, string> arptAtisLetter;
 
     static std::shared_mutex altimeterMutex;
     static std::shared_mutex atisLetterMutex;
+    static std::shared_mutex asyncMessagesMutex;
     static json jsVatsimDataFeed;
 
     static void loadPNG(std::vector<unsigned char>& buffer, const std::string& filename); //designed for loading files from hard disk in an std::vector
@@ -586,7 +589,31 @@ public:
 
         try {
             json j = json::parse(rainViewerJsonString.c_str());
-            wxRadar::ts = to_string(j.back());
+
+            // New RainViewer format: object with host + radar.past[].path.
+            if (j.is_object()) {
+                if (j.contains("host") && j["host"].is_string()) {
+                    wxRadar::tileHost = j["host"].get<string>();
+                }
+
+                if (j.contains("radar") && j["radar"].is_object() &&
+                    j["radar"].contains("past") && j["radar"]["past"].is_array() &&
+                    !j["radar"]["past"].empty() && j["radar"]["past"].back().is_object() &&
+                    j["radar"]["past"].back().contains("path") && j["radar"]["past"].back()["path"].is_string()) {
+                    wxRadar::radarPath = j["radar"]["past"].back()["path"].get<string>();
+                }
+            }
+
+            // Legacy fallback: array timestamp format.
+            if (wxRadar::radarPath.empty() && j.is_array() && !j.empty()) {
+                wxRadar::ts = to_string(j.back());
+                wxRadar::radarPath = "/v2/radar/" + wxRadar::ts;
+            }
+
+            // Host fallback for both formats.
+            if (wxRadar::tileHost.empty()) {
+                wxRadar::tileHost = "https://tilecache.rainviewer.com";
+            }
         }
         catch (exception& e) {
             rad->GetPlugIn()->DisplayUserMessage("VATCANSitu", "Error", string("Failed to get RainViewer JSON" + string(e.what())).c_str(), true, true, true, true, true);

@@ -47,15 +47,13 @@ public:
             icon[idx].x += x.x-1;
             icon[idx].y += x.y;
         }
-        HPEN hPen = CreatePen(PS_SOLID, 1, mbut.textColor);
-        HBRUSH iconBrush = CreateSolidBrush(mbut.textColor);
-        dc->SelectObject(iconBrush);
-        dc->SelectObject(hPen);
+        dc->SelectStockObject(DC_BRUSH);
+        dc->SetDCBrushColor(mbut.textColor);
+        dc->SelectStockObject(DC_PEN);
+        dc->SetDCPenColor(mbut.textColor);
 
         dc->Polygon(icon, iconSize);
         
-        DeleteObject(iconBrush);
-        DeleteObject(hPen);
         dc->RestoreDC(sDC);
     }
 
@@ -76,12 +74,10 @@ public:
             pcolorbr = RGB(140, 140, 140);
         }
 
-        COLORREF targetPenColor = RGB(140, 140, 140);
-        HPEN targetPen = CreatePen(PS_SOLID, 2, targetPenColor);
-        HBRUSH targetBrush = CreateSolidBrush(pressedcolor);
-
-        dc->SelectObject(targetPen);
-        dc->SelectObject(targetBrush);
+        dc->SelectStockObject(DC_PEN);
+        dc->SetDCPenColor(RGB(140, 140, 140));
+        dc->SelectStockObject(DC_BRUSH);
+        dc->SetDCBrushColor(pressedcolor);
 
         // button rectangle
         RECT rect1;
@@ -96,9 +92,6 @@ public:
         InflateRect(&rect1, -1, -1);
         dc->Draw3dRect(&rect1, pcolortl, pcolorbr);
         dc->DrawText(mbut.butText.c_str(), &rect1, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-
-        DeleteObject(targetPen);
-        DeleteObject(targetBrush);
 
         dc->RestoreDC(sDC);
 
@@ -123,12 +116,10 @@ public:
             pcolorbr = RGB(140, 140, 140);
         }
 
-        COLORREF targetPenColor = RGB(140, 140, 140);
-        HPEN targetPen = CreatePen(PS_SOLID, 2, targetPenColor);
-        HBRUSH targetBrush = CreateSolidBrush(pressedcolor);
-
-        dc->SelectObject(targetPen);
-        dc->SelectObject(targetBrush);
+        dc->SelectStockObject(DC_PEN);
+        dc->SetDCPenColor(RGB(140, 140, 140));
+        dc->SelectStockObject(DC_BRUSH);
+        dc->SetDCBrushColor(pressedcolor);
 
         // button rectangle
         RECT rect1;
@@ -143,9 +134,6 @@ public:
         InflateRect(&rect1, -1, -1);
         dc->Draw3dRect(&rect1, pcolortl, pcolorbr);
         dc->DrawText(CString(btext), &rect1, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-
-        DeleteObject(targetPen);
-        DeleteObject(targetBrush);
 
         dc->RestoreDC(sDC);
 
@@ -172,12 +160,10 @@ public:
             pcolorbr = RGB(140, 140, 140);
         }
 
-        COLORREF targetPenColor = RGB(140, 140, 140);
-        HPEN targetPen = CreatePen(PS_SOLID, 2, targetPenColor);
-        HBRUSH targetBrush = CreateSolidBrush(pressedcolor);
-
-        dc.SelectObject(targetPen);
-        dc.SelectObject(targetBrush);
+        dc.SelectStockObject(DC_PEN);
+        dc.SetDCPenColor(RGB(140, 140, 140));
+        dc.SelectStockObject(DC_BRUSH);
+        dc.SetDCBrushColor(pressedcolor);
 
         // button rectangle
         RECT rect1;
@@ -193,9 +179,6 @@ public:
         dc.Draw3dRect(&rect1, pcolortl, pcolorbr);
         dc.DrawText(CString(btext), &rect1, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-        DeleteObject(targetPen);
-        DeleteObject(targetBrush);
-
         dc.Detach();
 
         return rect1;
@@ -205,17 +188,12 @@ public:
         CDC dc;
         dc.Attach(hdc);
 
-        COLORREF targetPenColor = RGB(166, 166, 166);
-        HPEN targetPen = CreatePen(PS_SOLID, 1, targetPenColor);
-        HBRUSH targetBrush = CreateSolidBrush(RGB(66, 66, 66));
-
-        dc.SelectObject(targetPen);
-        dc.SelectObject(targetBrush);
+        dc.SelectStockObject(DC_PEN);
+        dc.SetDCPenColor(RGB(166, 166, 166));
+        dc.SelectStockObject(DC_BRUSH);
+        dc.SetDCBrushColor(RGB(66, 66, 66));
 
         dc.Rectangle(p.x, p.y, p.x + width, p.y + height);
-
-        DeleteObject(targetPen);
-        DeleteObject(targetBrush);
 
         dc.Detach();
     };

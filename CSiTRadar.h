@@ -36,9 +36,9 @@ struct SSquawkCodeManagement {
 };
 
 struct ACData {
-    bool hasVFRFP;
-    bool isADSB;
-    bool isRVSM;
+    bool hasVFRFP{ false };
+    bool isADSB{ false };
+    bool isRVSM{ false };
     bool isMedevac{ FALSE };
     int tagType{ 0 };
     bool isHandoff{ FALSE };
@@ -288,6 +288,7 @@ public:
     void asyncCPDLCFetch();
 
     virtual void OnAsrContentLoaded(bool Loaded);
+    virtual bool OnCompileCommand(const char* sCommandLine);
     void OnAsrContentToBeSaved();
     inline virtual void OnFlightPlanFlightPlanDataUpdate(CFlightPlan FlightPlan);
     inline virtual void OnFlightPlanDisconnect(CFlightPlan FlightPlan);

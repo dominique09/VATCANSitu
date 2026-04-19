@@ -190,15 +190,23 @@ std::string CPDLCMessage::PollCPDLCMessages() { // Returns raw string of CPDLC m
 	std::string rawHoppiePollString;
 
 	auto pollCurl = curl_easy_init();
+	if (!pollCurl) {
+		return "Error: Poll request initialization failed";
+	}
 
 	curl_easy_setopt(pollCurl, CURLOPT_URL, url.c_str());
 	curl_easy_setopt(pollCurl, CURLOPT_WRITEFUNCTION, write_data);
+	curl_easy_setopt(pollCurl, CURLOPT_NOSIGNAL, 1L);
 	curl_easy_setopt(pollCurl, CURLOPT_TIMEOUT_MS, 2500L);
 	curl_easy_setopt(pollCurl, CURLOPT_WRITEDATA, &rawHoppiePollString);
 
 	auto res = curl_easy_perform(pollCurl);
-	if (res == CURLE_OPERATION_TIMEDOUT) {
-		rawHoppiePollString = "Error: Poll request to Hoppie Timed Out, retry connection";
+	if (res != CURLE_OK) {
+		rawHoppiePollString = "Error: Poll request failed: ";
+		rawHoppiePollString += curl_easy_strerror(res);
+	}
+	if (rawHoppiePollString.empty()) {
+		rawHoppiePollString = "Error: Empty poll response";
 	}
 	curl_easy_cleanup(pollCurl);
 
@@ -219,44 +227,55 @@ void CPDLCMessage::SendCPDLCMessage() {
 	postfields += "&to=";
 	postfields += this->receipient;
 
-	std::string curlFriendlyRawMsg;
-
-	for (char character : this->rawMessageContent) {
-		if (character == ' ') {
-			curlFriendlyRawMsg += "%20";
-		}
-		else {
-			curlFriendlyRawMsg += character;
-		}
-	}
+	std::string packetRaw;
 
 	if (this->messageType == "cpdlc") {
-		postfields += "&type=cpdlc";
-		postfields += "&packet=/data2/";
-		postfields += std::to_string(this->messageID);
-		postfields += "/";
+		packetRaw += "/data2/";
+		packetRaw += std::to_string(this->messageID);
+		packetRaw += "/";
 		if (this->responseToMessageID != -1) {
-			postfields += std::to_string(this->responseToMessageID);
+			packetRaw += std::to_string(this->responseToMessageID);
 		}
-		postfields += "/";
-		postfields += this->responseRequired;
-		postfields += "/";
-		postfields += this->rawMessageContent;
+		packetRaw += "/";
+		packetRaw += this->responseRequired;
+		packetRaw += "/";
+		packetRaw += this->rawMessageContent;
 	}
 
 	if (this->messageType == "telex") {
-		postfields += "&type=telex";
-		postfields += "&packet=";
-		postfields += curlFriendlyRawMsg;
+		packetRaw = this->rawMessageContent;
 	}
 
 	std::string postResponse;
 
 	auto postCurl = curl_easy_init();
+	if (!postCurl) {
+		this->sent = false;
+		return;
+	}
+
+	char* encodedPacket = curl_easy_escape(postCurl, packetRaw.c_str(), 0);
+	if (encodedPacket == nullptr) {
+		this->sent = false;
+		curl_easy_cleanup(postCurl);
+		return;
+	}
+
+	if (this->messageType == "cpdlc") {
+		postfields += "&type=cpdlc";
+	}
+	if (this->messageType == "telex") {
+		postfields += "&type=telex";
+	}
+	postfields += "&packet=";
+	postfields += encodedPacket;
+	curl_free(encodedPacket);
 
 	curl_easy_setopt(postCurl, CURLOPT_URL, url.c_str());
 	curl_easy_setopt(postCurl, CURLOPT_POSTFIELDS, postfields.c_str());
 	curl_easy_setopt(postCurl, CURLOPT_WRITEFUNCTION, write_data);
+	curl_easy_setopt(postCurl, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(postCurl, CURLOPT_TIMEOUT_MS, 2500L);
 	curl_easy_setopt(postCurl, CURLOPT_WRITEDATA, &postResponse);
 	auto res = curl_easy_perform(postCurl);
 	curl_easy_cleanup(postCurl);
@@ -265,7 +284,7 @@ void CPDLCMessage::SendCPDLCMessage() {
 		this->sent = false;
 	}
 	else {
-		if (postResponse.substr(0, 2) == "ok") { this->sent = true; }
+		this->sent = (postResponse.size() >= 2 && postResponse.substr(0, 2) == "ok");
 	}
 
 }
@@ -389,8 +408,8 @@ std::string CPDLCMessage::MakePDCMessage(EuroScopePlugIn::CFlightPlan& flightpla
 			this->responseRequired = "WU";
 			this->messageType = "cpdlc";
 
-			this->rawMessageContent += flightplan.GetFlightPlanData().GetOrigin();
-			this->rawMessageContent = " PDC "; // Generate the PDC string;
+			this->rawMessageContent = flightplan.GetFlightPlanData().GetOrigin();
+			this->rawMessageContent += " PDC ";
 			this->rawMessageContent += std::to_string(pdcNumbers);
 			this->rawMessageContent += " ";
 

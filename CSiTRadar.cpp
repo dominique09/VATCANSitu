@@ -1,7 +1,37 @@
 #include "pch.h"
 #include "CSiTRadar.h"
+#include <atomic>
 
 using namespace Gdiplus;
+
+namespace {
+std::atomic_bool g_cpdlcFetchInProgress{ false };
+
+std::string GetSettingsFilePath() {
+	std::string settingsDir;
+	HMODULE hModule = nullptr;
+	if (GetModuleHandleExA(
+		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		reinterpret_cast<LPCSTR>(&g_cpdlcFetchInProgress),
+		&hModule) != 0 && hModule != nullptr) {
+		char modulePath[MAX_PATH] = {};
+		if (GetModuleFileNameA(hModule, modulePath, MAX_PATH) > 0) {
+			std::string moduleFilePath(modulePath);
+			size_t lastSlash = moduleFilePath.find_last_of("\\/");
+			if (lastSlash != std::string::npos) {
+				settingsDir = moduleFilePath.substr(0, lastSlash) + "\\situWx";
+			}
+		}
+	}
+
+	if (settingsDir.empty()) {
+		settingsDir = ".\\situWx";
+	}
+
+	CreateDirectoryA(settingsDir.c_str(), NULL);
+	return settingsDir + "\\settings.json";
+}
+}
 
 // Initialize Static Members
 unordered_map<string, ACData> CSiTRadar::mAcData;
@@ -42,13 +72,14 @@ CSiTRadar::CSiTRadar()
 
 	// load settings file
 	try {
+		const std::string settingsPath = GetSettingsFilePath();
 		if (menuState.ctrlRemarkDefaults.size() < 7) {
 			for (int i = (int)menuState.ctrlRemarkDefaults.size(); i < 7; i++) {
 				menuState.ctrlRemarkDefaults.emplace_back("");
 			}
 		}
 
-		std::ifstream settings_file(".\\situWx\\settings.json");
+		std::ifstream settings_file(settingsPath);
 		if (settings_file.is_open()) {
 			json j = json::parse(settings_file);
 
@@ -81,7 +112,7 @@ CSiTRadar::CSiTRadar()
 		}
 		// write defaults if no file
 		else {
-			std::ofstream settings_file(".\\situWx\\settings.json");
+			std::ofstream settings_file(settingsPath);
 
 			json j;
 			j["wxlat"] = wxRadar::wxLatCtr;
@@ -150,10 +181,10 @@ CSiTRadar::~CSiTRadar()
 {
 	// Save settings file
 	try {
+		const std::string settingsPath = GetSettingsFilePath();
 
-		std::ifstream settings_file(".\\situWx\\settings.json");
+		std::ofstream settings_file(settingsPath);
 		if (settings_file.is_open()) {
-			std::ofstream settings_file(".\\situWx\\settings.json");
 
 			json j;
 			j["wxlat"] = wxRadar::wxLatCtr;
@@ -230,50 +261,55 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 	RECT radarea = GetRadarArea();
 
 	// Get threaded messages
-	for (auto& message : wxRadar::asyncMessages) {
+	std::vector<CAsyncResponse> pendingMessages;
+	{
+		std::unique_lock<std::shared_mutex> lock(wxRadar::asyncMessagesMutex);
+		pendingMessages.swap(wxRadar::asyncMessages);
+	}
+	for (auto& message : pendingMessages) {
 		GetPlugIn()->DisplayUserMessage("VATCAN Situ", "Warning", message.reponseMessage.c_str(), true, false, false, false, false);
 	}
-	wxRadar::asyncMessages.clear();
 
 #pragma region timers
 	// time based functions
-	double time = ((double)clock() - (double)halfSec) / ((double)CLOCKS_PER_SEC);
+	clock_t now = clock();
+	double time = ((double)now - (double)halfSec) / ((double)CLOCKS_PER_SEC);
 	if (time >= 0.5) {
-		halfSec = clock();
+		halfSec = now;
 		halfSecTick = !halfSecTick;
 	}
 
 	if (phase == REFRESH_PHASE_BEFORE_TAGS) {
 
-		if (((clock() - menuState.lastWxRefresh) / CLOCKS_PER_SEC) > 600 && (menuState.wxAll || menuState.wxHigh)) {
+		if (((now - menuState.lastWxRefresh) / CLOCKS_PER_SEC) > 600 && (menuState.wxAll || menuState.wxHigh)) {
 
 			// autorefresh weather download every 10 minutes
 			fb = std::async(std::launch::async, wxRadar::parseRadarPNG, this);
-			menuState.lastWxRefresh = clock();
+			menuState.lastWxRefresh = now;
 		}
 
-		if (((clock() - menuState.lastCPDLCPoll) / CLOCKS_PER_SEC) > 60 && (menuState.CPDLCOn)) {
-			
-			CSiTRadar::asyncCPDLCFetch();
-			menuState.lastCPDLCPoll = clock();
+		if (((now - menuState.lastCPDLCPoll) / CLOCKS_PER_SEC) > 60 && (menuState.CPDLCOn)) {
+			std::thread cpdlcFetchThread(&CSiTRadar::asyncCPDLCFetch, this);
+			cpdlcFetchThread.detach();
+			menuState.lastCPDLCPoll = now;
 
 		}
 
-		if (((clock() - menuState.lastMetarRefresh) / CLOCKS_PER_SEC) > 600) { // update METAR every 10 mins
+		if (((now - menuState.lastMetarRefresh) / CLOCKS_PER_SEC) > 600) { // update METAR every 10 mins
 			std::thread tc(wxRadar::parseVatsimMetar, 0);
 			tc.detach();
 			// fc = std::async(std::launch::async, wxRadar::parseVatsimMetar, 0);
-			menuState.lastMetarRefresh = clock();
+			menuState.lastMetarRefresh = now;
 		}
 
-		if (((clock() - menuState.lastAtisRefresh) / CLOCKS_PER_SEC) > 120) { // update ATIS letter every 2 mins
+		if (((now - menuState.lastAtisRefresh) / CLOCKS_PER_SEC) > 120) { // update ATIS letter every 2 mins
 			std::thread td(wxRadar::parseVatsimATIS, 0);
 			td.detach();
 			// fd = std::async(std::launch::async, wxRadar::parseVatsimATIS, 0);
-			menuState.lastAtisRefresh = clock();
+			menuState.lastAtisRefresh = now;
 		}
 
-		if (((clock() - menuState.handoffModeStartTime) / CLOCKS_PER_SEC) > 10 && menuState.handoffMode) {
+		if (((now - menuState.handoffModeStartTime) / CLOCKS_PER_SEC) > 10 && menuState.handoffMode) {
 			menuState.handoffMode = FALSE;
 			menuState.SFIMode = false;
 			CSiTRadar::menuState.jurisdictionIndex = 0;
@@ -281,7 +317,7 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 		}
 
 		// Garbage collect every 5 minutes
-		if (((clock() - menuState.lastAcListMaint) / CLOCKS_PER_SEC) > 300) {
+		if (((now - menuState.lastAcListMaint) / CLOCKS_PER_SEC) > 300) {
 
 			menuState.recentCallsignsSeen.clear();
 
@@ -325,7 +361,7 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 				}
 			}
 
-			menuState.lastAcListMaint = clock();
+			menuState.lastAcListMaint = now;
 			GetPlugIn()->DisplayUserMessage("VATCAN Situ", "menuState.squawkCodes:", to_string(menuState.squawkCodes.size()).c_str(), true, false, false, false, false);
 
 		}
@@ -371,8 +407,13 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 					// draw PPS
 					bool isVFR = mAcData[callSign].hasVFRFP;
+					if (isCorrelated) {
+						isVFR = !strcmp(radarTarget.GetCorrelatedFlightPlan().GetFlightPlanData().GetPlanType(), "V");
+						mAcData[callSign].hasVFRFP = isVFR;
+					}
 					bool isRVSM = mAcData[callSign].isRVSM;
 					bool isADSB = mAcData[callSign].isADSB;
+					if (!isADSB) { auto _it = acADSB.find(callSign); if (_it != acADSB.end() && _it->second) { isADSB = true; mAcData[callSign].isADSB = true; } }
 
 					if ((!isCorrelated && !isADSB) || (radarTarget.GetPosition().GetRadarFlags() != 0 && isADSB && !isCorrelated)) {
 						mAcData[callSign].tagType = 3; // sets this if RT is uncorr
@@ -459,10 +500,11 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 					radarTarget = GetPlugIn()->RadarTargetSelectNext(radarTarget))
 				{
 					string callSign = radarTarget.GetCallsign();
+					ACData& acData = mAcData[callSign];
 
 
 					if (menuState.filterBypassAll) {
-						mAcData[radarTarget.GetCallsign()].tagType = 1;
+						acData.tagType = 1;
 					}
 
 					// Correlation check
@@ -490,14 +532,14 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 										radarTarget.CorrelateWithFlightPlan(GetPlugIn()->FlightPlanSelect(sqitr->fpcs.c_str()));
 										sqitr->numCorrelatedRT++;
-										mAcData[callSign].multipleDiscrete = false;
+										acData.multipleDiscrete = false;
 									}
 
 									else {
 
 										// Multiple discrete offender handling, squawk should be forced on and it should flash, and it should not correlate
 										radarTarget.Uncorrelate();
-										mAcData[callSign].multipleDiscrete = true;
+										acData.multipleDiscrete = true;
 
 										//to-do add message to message list:
 
@@ -508,7 +550,7 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 						}
 					}
 					if (radarTarget.GetPosition().GetRadarFlags() < 2) {
-						if (radarTarget.GetPosition().GetRadarFlags() == 0 || !mAcData[radarTarget.GetCallsign()].manualCorr) {
+						if (radarTarget.GetPosition().GetRadarFlags() == 0 || !acData.manualCorr) {
 							radarTarget.Uncorrelate();
 						}
 					}
@@ -560,37 +602,40 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 						p.x < GetRadarArea().left ||
 						p.x > GetRadarArea().right)
 					{
-						mAcData[radarTarget.GetCallsign()].isOnScreen = false;
+						acData.isOnScreen = false;
+						continue;
 					}
 					else {
-						mAcData[radarTarget.GetCallsign()].isOnScreen = true;
+						acData.isOnScreen = true;
 					}
 
 					// Draw pending direct to line if exists
-					if (mAcData[callSign].directToLineOn) {
-						HPEN targetPen;
-						targetPen = CreatePen(PS_DASHDOT, 1, C_WHITE);
-						dc.SelectObject(targetPen);
+					if (acData.directToLineOn) {
+						static HPEN sDirectToPen = CreatePen(PS_DASHDOT, 1, C_WHITE);
+						dc.SelectObject(sDirectToPen);
 
 						dc.MoveTo(p);
-						dc.LineTo(ConvertCoordFromPositionToPixel(mAcData[callSign].directToPendingPosition));
+						dc.LineTo(ConvertCoordFromPositionToPixel(acData.directToPendingPosition));
 
 						RECT dctFixNameRect;
-						dctFixNameRect.top = ConvertCoordFromPositionToPixel(mAcData[callSign].directToPendingPosition).y + 3;
-						dctFixNameRect.left = ConvertCoordFromPositionToPixel(mAcData[callSign].directToPendingPosition).x -15;
+						dctFixNameRect.top = ConvertCoordFromPositionToPixel(acData.directToPendingPosition).y + 3;
+						dctFixNameRect.left = ConvertCoordFromPositionToPixel(acData.directToPendingPosition).x -15;
 
-						dc.DrawText(mAcData[callSign].directToPendingFixName.c_str(), &dctFixNameRect, DT_CENTER | DT_CALCRECT);
-						dc.DrawText(mAcData[callSign].directToPendingFixName.c_str(), &dctFixNameRect, DT_CENTER);
-
-						DeleteObject(targetPen);
+						dc.DrawText(acData.directToPendingFixName.c_str(), &dctFixNameRect, DT_CENTER | DT_CALCRECT);
+						dc.DrawText(acData.directToPendingFixName.c_str(), &dctFixNameRect, DT_CENTER);
 
 					}
 
 					// Get information about the Aircraft/Flightplan
 					bool isCorrelated = radarTarget.GetCorrelatedFlightPlan().IsValid();
-					bool isVFR = mAcData[callSign].hasVFRFP;
-					bool isRVSM = mAcData[callSign].isRVSM;
-					bool isADSB = mAcData[callSign].isADSB;
+					bool isVFR = acData.hasVFRFP;
+					if (isCorrelated) {
+						isVFR = !strcmp(radarTarget.GetCorrelatedFlightPlan().GetFlightPlanData().GetPlanType(), "V");
+						acData.hasVFRFP = isVFR;
+					}
+					bool isRVSM = acData.isRVSM;
+					bool isADSB = acData.isADSB;
+					if (!isADSB) { auto _it = acADSB.find(callSign); if (_it != acADSB.end() && _it->second) { isADSB = true; acData.isADSB = true; } }
 
 					// Draw PTL
 					if (hasPTL.find(radarTarget.GetCallsign()) != hasPTL.end()) {
@@ -640,13 +685,13 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 									// Lead plane is M
 									if (radarTarget.GetCorrelatedFlightPlan().GetFlightPlanData().GetAircraftWtc() == 'M') {
-										if (mAcData[callSign].follower == 0) {
+										if (acData.follower == 0) {
 											tbsDist = 4;
 											if ((double)radarTarget.GetGS() / 3600 * 90 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 90;
 											}
 										}
-										else if (mAcData[callSign].follower >= 1) {
+										else if (acData.follower >= 1) {
 											tbsDist = 3; // min radar
 
 											if ((double)radarTarget.GetGS() / 3600 * 68 < tbsDist) {
@@ -657,25 +702,25 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 									// Lead Plane is H
 									if (radarTarget.GetCorrelatedFlightPlan().GetFlightPlanData().GetAircraftWtc() == 'H') {
-										if (mAcData[callSign].follower == 0) {
+										if (acData.follower == 0) {
 											tbsDist = 6;
 											if ((double)radarTarget.GetGS() / 3600 * 135 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 135;
 											}
 										}
-										else if (mAcData[callSign].follower == 1) {
+										else if (acData.follower == 1) {
 											tbsDist = 5;
 											if ((double)radarTarget.GetGS() / 3600 * 113 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 113;
 											}
 										}
-										else if (mAcData[callSign].follower == 2) {
+										else if (acData.follower == 2) {
 											tbsDist = 4;
 											if ((double)radarTarget.GetGS() / 3600 * 90 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 90;
 											}
 										}
-										else if (mAcData[callSign].follower == 3) {
+										else if (acData.follower == 3) {
 											tbsDist = 3;
 											if ((double)radarTarget.GetGS() / 3600 * 68 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 68;
@@ -685,25 +730,25 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 									// Lead Plane is J
 									if (radarTarget.GetCorrelatedFlightPlan().GetFlightPlanData().GetAircraftWtc() == 'J') {
-										if (mAcData[callSign].follower == 0) {
+										if (acData.follower == 0) {
 											tbsDist = 8;
 											if ((double)radarTarget.GetGS() / 3600 * 180 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 180;
 											}
 										}
-										else if (mAcData[callSign].follower == 1) {
+										else if (acData.follower == 1) {
 											tbsDist = 7;
 											if ((double)radarTarget.GetGS() / 3600 * 158 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 158;
 											}
 										}
-										else if (mAcData[callSign].follower == 2) {
+										else if (acData.follower == 2) {
 											tbsDist = 6;
 											if ((double)radarTarget.GetGS() / 3600 * 135 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 135;
 											}
 										}
-										else if (mAcData[callSign].follower == 3) {
+										else if (acData.follower == 3) {
 											tbsDist = 4;
 											if ((double)radarTarget.GetGS() / 3600 * 90 < tbsDist) {
 												tbsDist = (double)radarTarget.GetGS() / 3600 * 90;
@@ -729,10 +774,10 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 										rectTBS.bottom = followerP.y + 10;
 
 										string tbsFollowerStr;
-										if (mAcData[callSign].follower == 0) { tbsFollowerStr = 'L'; }
-										if (mAcData[callSign].follower == 1) { tbsFollowerStr = 'M'; }
-										if (mAcData[callSign].follower == 2) { tbsFollowerStr = 'H'; }
-										if (mAcData[callSign].follower == 3) { tbsFollowerStr = 'J'; }
+										if (acData.follower == 0) { tbsFollowerStr = 'L'; }
+										if (acData.follower == 1) { tbsFollowerStr = 'M'; }
+										if (acData.follower == 2) { tbsFollowerStr = 'H'; }
+										if (acData.follower == 3) { tbsFollowerStr = 'J'; }
 
 										dc.DrawText(tbsFollowerStr.c_str(), &rectTBS, DT_LEFT);
 										AddScreenObject(TBS_FOLLOWER_TOGGLE, callSign.c_str(), rectTBS, false, "Toggle TBS Follower");
@@ -746,9 +791,9 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 
 					if ((!isCorrelated && !isADSB) || (radarTarget.GetPosition().GetRadarFlags() != 0 && isADSB && !isCorrelated)) {
-						mAcData[callSign].tagType = 3; // sets this if RT is uncorr
+						acData.tagType = 3; // sets this if RT is uncorr
 					}
-					else if (isCorrelated && mAcData[callSign].tagType == 3) { mAcData[callSign].tagType = 0; } // only sets once to go from uncorr to corr
+					else if (isCorrelated && acData.tagType == 3) { acData.tagType = 0; } // only sets once to go from uncorr to corr
 					// then allows it to be opened closed etc
 
 					COLORREF ppsColor;
@@ -1926,9 +1971,7 @@ void CSiTRadar::OnRefresh(HDC hdc, int phase)
 
 		if (phase == REFRESH_PHASE_BACK_BITMAP) {
 			if (menuState.wxAll || menuState.wxHigh) {
-
-				std::future<int> wxImg = std::async(std::launch::async, wxRadar::renderRadar, &g, this, menuState.wxAll);
-				// wxRadar::renderRadar( &g, this, menuState.wxAll);
+				wxRadar::renderRadar(&g, this, menuState.wxAll);
 			}
 
 			// refresh jurisdictional list on zoom change
@@ -2472,7 +2515,12 @@ void CSiTRadar::OnClickScreenObject(int ObjectType,
 				else {
 
 					SetTextToClipBoard(pdcuplink.rawMessageContent);
-					pdcuplink.rawMessageContent.insert(0, "ERR: NO DOWNLINK, PDC COPIED TO CLIPBOARD:");
+
+					// Prepare chat fallback in the input line, but do not send (no Enter keypress).
+					string pdcChatMessage = ".chat " + window->m_callsign + " " + pdcuplink.rawMessageContent;
+					SituPlugin::SendKeyboardString(pdcChatMessage);
+
+					pdcuplink.rawMessageContent.insert(0, "ERR: NO DOWNLINK, PDC COPIED TO CLIPBOARD AND CHAT PREPARED:");
 					it->second.m_textfields_.at(1).m_cpdlcmessage = pdcuplink;
 
 				}
@@ -3279,8 +3327,8 @@ void CSiTRadar::OnButtonDownScreenObject(int ObjectType,
 			menuState.CPDLCOn = !menuState.CPDLCOn;
 
 			if (menuState.lastCPDLCPoll == 0 || (clock() - menuState.lastCPDLCPoll) / CLOCKS_PER_SEC > 60) {
-
-				CSiTRadar::asyncCPDLCFetch();
+				std::thread cpdlcFetchThread(&CSiTRadar::asyncCPDLCFetch, this);
+				cpdlcFetchThread.detach();
 				menuState.lastCPDLCPoll = clock();
 
 				CPDLCMessage::firstPeek = false;
@@ -4029,6 +4077,26 @@ void CSiTRadar::OnAsrContentLoaded(bool Loaded) {
 	//
 } 
 
+bool CSiTRadar::OnCompileCommand(const char* sCommandLine) {
+
+	if (sCommandLine == nullptr) { return false; }
+
+	if (_stricmp(sCommandLine, ".help") == 0) {
+		GetPlugIn()->DisplayUserMessage("VATCAN Situ", "Help", "Available commands: .help, .atisrefresh, .refreshatis", true, false, false, false, false);
+		return true;
+	}
+
+	if (_stricmp(sCommandLine, ".atisrefresh") == 0 || _stricmp(sCommandLine, ".refreshatis") == 0) {
+		std::thread td(wxRadar::parseVatsimATIS, 0);
+		td.detach();
+		menuState.lastAtisRefresh = clock();
+		GetPlugIn()->DisplayUserMessage("VATCAN Situ", "ATIS", "Manual VATSIM ATIS refresh triggered", true, false, false, false, false);
+		return true;
+	}
+
+	return false;
+}
+
 void CSiTRadar::OnFlightPlanFlightPlanDataUpdate(CFlightPlan FlightPlan)
 {
 
@@ -4084,6 +4152,17 @@ void CSiTRadar::OnFlightPlanFlightPlanDataUpdate(CFlightPlan FlightPlan)
 	it = CSiTRadar::acADSB.find(callSign);
 	if (it != CSiTRadar::acADSB.end()) {
 		isADSB = it->second;
+	}
+
+	// Fallback: parse ADS-B capability from the local item 10 string when cache is stale.
+	if (!isADSB) {
+		size_t firstSlash = icaoACData.find('/');
+		size_t secondSlash = (firstSlash == string::npos) ? string::npos : icaoACData.find('/', firstSlash + 1);
+		if (secondSlash != string::npos && secondSlash + 1 < icaoACData.size()) {
+			string surveillance = icaoACData.substr(secondSlash + 1);
+			regex icaoADSB("(B1|B2|U1|U2|V1|V2)", regex::icase);
+			isADSB = regex_search(surveillance, icaoADSB);
+		}
 	}
 
 	string remarks = FlightPlan.GetFlightPlanData().GetRemarks();
@@ -4383,36 +4462,12 @@ void CSiTRadar::OnAsrContentToBeSaved() {
 
 void CSiTRadar::OnControllerPositionUpdate(CController Controller)
 {
-	/*std::once_flag flag1;
+	if (!Controller.IsValid()) { return; }
+	if (!Controller.GetPositionIdentified()) { return; }
 
-	std::call_once(flag1, [&]() {
-
-		for (CFlightPlan flightPlan = GetPlugIn()->FlightPlanSelectFirst(); flightPlan.IsValid();
-			flightPlan = GetPlugIn()->FlightPlanSelectNext(flightPlan)) {
-			auto itr = find_if(menuState.squawkCodes.begin(), menuState.squawkCodes.end(), [&flightPlan](SSquawkCodeManagement& m)->bool {return !strcmp(m.fpcs.c_str(), flightPlan.GetCallsign()); });
-			if (itr == menuState.squawkCodes.end()) {
-				SSquawkCodeManagement sq;
-				sq.fpcs = flightPlan.GetCallsign();
-				sq.squawk = flightPlan.GetControllerAssignedData().GetSquawk();
-				sq.numCorrelatedRT = 0;
-				menuState.squawkCodes.push_back(sq);
-			}
-			else {
-				menuState.squawkCodes.at(distance(menuState.squawkCodes.begin(), itr)).squawk = flightPlan.GetControllerAssignedData().GetSquawk();
-			}
-
-		}
-		});
-	*/
-
-	for (CController ctrl = CSiTRadar::m_pRadScr->GetPlugIn()->ControllerSelectFirst(); ctrl.IsValid(); ctrl = CSiTRadar::m_pRadScr->GetPlugIn()->ControllerSelectNext(ctrl))
-	{
-		if (ctrl.GetPositionIdentified()) {
-			string cjs = ctrl.GetPositionId();
-			if (cjs.size() <= 2) {
-				CSiTRadar::menuState.nearbyCJS.insert(pair<string, bool>(ctrl.GetPositionId(), false));
-			}
-		}
+	string cjs = Controller.GetPositionId();
+	if (cjs.size() <= 2) {
+		CSiTRadar::menuState.nearbyCJS.insert(pair<string, bool>(cjs, false));
 	}
 }
 
@@ -4456,6 +4511,14 @@ void CSiTRadar::OnFlightPlanFlightStripPushed(CFlightPlan FlightPlan,
 }
 
 void CSiTRadar::asyncCPDLCFetch() {// autorefresh every minute
+	if (g_cpdlcFetchInProgress.exchange(true)) {
+		return;
+	}
+
+	struct SClearBusy {
+		~SClearBusy() { g_cpdlcFetchInProgress = false; }
+	} clearBusy;
+
 	std::string s;
 	s = CPDLCMessage::PollCPDLCMessages();
 	CSiTRadar::menuState.lastCPDLCPoll = clock();
